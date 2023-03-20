@@ -1,8 +1,14 @@
 package phase2
 
 import (
+	"bufio"
 	"crypto/sha256"
+	"encoding/gob"
+	"fmt"
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
 	"math/big"
+	"os"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -114,6 +120,179 @@ func (c2 *Contribution) PreparePhase2(c1 *phase1.Contribution, r1cs *cs_bn254.R1
 			accumulateG1(&C[t.WireID()], t, &coeffTau1[i])
 		}
 	}
+
+	// Prepare default contribution
+	_, _, g1, g2 := bn254.Generators()
+	c2.Parameters.G1.Delta = g1
+	c2.Parameters.G2.Delta = g2
+
+	// Build Z in PK as τⁱ(τⁿ - 1)  = τ⁽ⁱ⁺ⁿ⁾ - τⁱ  for i ∈ [0, n-2]
+	// τⁱ(τⁿ - 1)  = τ⁽ⁱ⁺ⁿ⁾ - τⁱ  for i ∈ [0, n-2]
+	n := len(srs.G1.AlphaTau)
+	c2.Parameters.G1.Z = make([]bn254.G1Affine, n)
+	for i := 0; i < n-1; i++ {
+		c2.Parameters.G1.Z[i].Sub(&srs.G1.Tau[i+n], &srs.G1.Tau[i])
+	}
+	utils.BitReverseG1(c2.Parameters.G1.Z)
+	c2.Parameters.G1.Z = c2.Parameters.G1.Z[:n-1]
+
+	// Evaluate L
+	nPrivate := internal + secret
+	c2.Parameters.G1.L = make([]bn254.G1Affine, nPrivate)
+	evals.G1.VKK = make([]bn254.G1Affine, public)
+	offset := public
+	for i := 0; i < nWires; i++ {
+		var tmp bn254.G1Affine
+		tmp.Add(&bA[i], &aB[i])
+		tmp.Add(&tmp, &C[i])
+		if i < public {
+			evals.G1.VKK[i].Set(&tmp)
+		} else {
+			c2.Parameters.G1.L[i-offset].Set(&tmp)
+		}
+	}
+	// Set δ public key
+	var delta fr.Element
+	delta.SetOne()
+	c2.PublicKey = utils.GenPublicKey(delta, nil, 1)
+
+	// Hash initial contribution
+	c2.Hash = HashContribution(c2)
+	return evals
+}
+
+func (c2 *Contribution) PreparePhase2FromFile(c1 *phase1.Contribution, session string, N, batchSize int) Evaluations {
+	_r1cs := groth16.NewCS(ecc.BN254)
+	{
+		name := fmt.Sprintf("%s.r1cs.E.save", session)
+		r1csDump, err := os.Open(name)
+		if err != nil {
+			panic(err)
+		}
+		_r1cs.ReadFrom(r1csDump)
+	}
+	r1cs := _r1cs.(*cs_bn254.R1CS)
+	fmt.Println("len coef:", len(r1cs.Coefficients))
+
+	srs := c1.Parameters
+	size := len(srs.G1.AlphaTau)
+	if size < r1cs.GetNbConstraints() {
+		panic("Number of constraints is larger than expected")
+	}
+
+	accumulateG1 := func(res *bn254.G1Affine, t constraint.Term, value *bn254.G1Affine) {
+		cID := t.CoeffID()
+		switch cID {
+		case constraint.CoeffIdZero:
+			return
+		case constraint.CoeffIdOne:
+			res.Add(res, value)
+		case constraint.CoeffIdMinusOne:
+			res.Sub(res, value)
+		case constraint.CoeffIdTwo:
+			res.Add(res, value).Add(res, value)
+		default:
+			var tmp bn254.G1Affine
+			var vBi big.Int
+			r1cs.Coefficients[cID].BigInt(&vBi)
+			tmp.ScalarMultiplication(value, &vBi)
+			res.Add(res, &tmp)
+		}
+	}
+
+	accumulateG2 := func(res *bn254.G2Affine, t constraint.Term, value *bn254.G2Affine) {
+		cID := t.CoeffID()
+		switch cID {
+		case constraint.CoeffIdZero:
+			return
+		case constraint.CoeffIdOne:
+			res.Add(res, value)
+		case constraint.CoeffIdMinusOne:
+			res.Sub(res, value)
+		case constraint.CoeffIdTwo:
+			res.Add(res, value).Add(res, value)
+		default:
+			var tmp bn254.G2Affine
+			var vBi big.Int
+			r1cs.Coefficients[cID].BigInt(&vBi)
+			tmp.ScalarMultiplication(value, &vBi)
+			res.Add(res, &tmp)
+		}
+	}
+
+	// Prepare Lagrange coefficients of [τ...]₁, [τ...]₂, [ατ...]₁, [βτ...]₁
+	coeffTau1 := utils.LagrangeCoeffsG1(srs.G1.Tau, size)
+	coeffTau2 := utils.LagrangeCoeffsG2(srs.G2.Tau, size)
+	coeffAlphaTau1 := utils.LagrangeCoeffsG1(srs.G1.AlphaTau, size)
+	coeffBetaTau1 := utils.LagrangeCoeffsG1(srs.G1.BetaTau, size)
+
+	internal, secret, public := r1cs.GetNbVariables()
+	nWires := internal + secret + public
+	var evals Evaluations
+	evals.G1.A = make([]bn254.G1Affine, nWires)
+	evals.G1.B = make([]bn254.G1Affine, nWires)
+	evals.G2.B = make([]bn254.G2Affine, nWires)
+	bA := make([]bn254.G1Affine, nWires)
+	aB := make([]bn254.G1Affine, nWires)
+	C := make([]bn254.G1Affine, nWires)
+	for i := 0; i < N; {
+		fmt.Println("processing", i, "/", N)
+		// read R1C[i, min(i+batchSize, end)]
+		ccs2 := &cs_bn254.R1CS{}
+		iNew := i + batchSize
+		if iNew > N {
+			iNew = N
+		}
+		name := fmt.Sprintf("%s.r1cs.Cons.%d.%d.save", session, i, iNew)
+		csFile, err := os.Open(name)
+		if err != nil {
+			panic(err)
+		}
+		reader := bufio.NewReader(csFile)
+		enc := gob.NewDecoder(reader)
+		err = enc.Decode(ccs2)
+		if err != nil {
+			panic(err)
+		}
+		// copy(ccs.R1CSCore.Constraints[i:iNew], ccs2.R1CSCore.Constraints)
+		for j, c := range ccs2.R1CSCore.Constraints {
+			// A
+			for _, t := range c.L {
+				accumulateG1(&evals.G1.A[t.WireID()], t, &coeffTau1[j+i])
+				accumulateG1(&bA[t.WireID()], t, &coeffBetaTau1[j+i])
+			}
+			// B
+			for _, t := range c.R {
+				accumulateG1(&evals.G1.B[t.WireID()], t, &coeffTau1[j+i])
+				accumulateG2(&evals.G2.B[t.WireID()], t, &coeffTau2[j+i])
+				accumulateG1(&aB[t.WireID()], t, &coeffAlphaTau1[j+i])
+			}
+			// C
+			for _, t := range c.O {
+				accumulateG1(&C[t.WireID()], t, &coeffTau1[j+i])
+			}
+
+		}
+
+		i = iNew
+	}
+	// for i, c := range r1cs.Constraints {
+	// 	// A
+	// 	for _, t := range c.L {
+	// 		accumulateG1(&evals.G1.A[t.WireID()], t, &coeffTau1[i])
+	// 		accumulateG1(&bA[t.WireID()], t, &coeffBetaTau1[i])
+	// 	}
+	// 	// B
+	// 	for _, t := range c.R {
+	// 		accumulateG1(&evals.G1.B[t.WireID()], t, &coeffTau1[i])
+	// 		accumulateG2(&evals.G2.B[t.WireID()], t, &coeffTau2[i])
+	// 		accumulateG1(&aB[t.WireID()], t, &coeffAlphaTau1[i])
+	// 	}
+	// 	// C
+	// 	for _, t := range c.O {
+	// 		accumulateG1(&C[t.WireID()], t, &coeffTau1[i])
+	// 	}
+	// }
 
 	// Prepare default contribution
 	_, _, g1, g2 := bn254.Generators()

@@ -1,7 +1,12 @@
 package utils
 
 import (
+	"bufio"
+	"encoding/gob"
+	"fmt"
+	bn254r1cs "github.com/consensys/gnark/constraint/bn254"
 	"math/big"
+	"os"
 	"runtime"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -138,4 +143,51 @@ func GenPublicKey(x fr.Element, challenge []byte, dst byte) PublicKey {
 	// compute x*spG2
 	pk.XR.ScalarMultiplication(&R, &xBi)
 	return pk
+}
+
+func SplitDumpR1CSBinary(ccs *bn254r1cs.R1CS, session string, batchSize int) error {
+	// E part
+	{
+		ccs2 := &bn254r1cs.R1CS{}
+		ccs2.CoeffTable = ccs.CoeffTable
+		ccs2.R1CSCore.System = ccs.R1CSCore.System
+
+		name := fmt.Sprintf("%s.r1cs.E.save", session)
+		csFile, err := os.Create(name)
+		if err != nil {
+			return err
+		}
+		// cnt, err := ccs2.WriteTo(csFile)
+		// fmt.Println("written ", cnt, name)
+		ccs2.WriteTo(csFile)
+	}
+
+	N := len(ccs.R1CSCore.Constraints)
+	for i := 0; i < N; {
+		// dump R1C[i, min(i+batchSize, end)]
+		ccs2 := &bn254r1cs.R1CS{}
+		iNew := i + batchSize
+		if iNew > N {
+			iNew = N
+		}
+		ccs2.R1CSCore.Constraints = ccs.R1CSCore.Constraints[i:iNew]
+		name := fmt.Sprintf("%s.r1cs.Cons.%d.%d.save", session, i, iNew)
+		csFile, err := os.Create(name)
+		if err != nil {
+			return err
+		}
+		// cnt, err := ccs2.WriteTo(csFile)
+		// fmt.Println("written ", cnt, name)
+		writer := bufio.NewWriter(csFile)
+		enc := gob.NewEncoder(writer)
+		err = enc.Encode(ccs2)
+		if err != nil {
+			panic(err)
+		}
+		//ccs2.WriteTo(csFile)
+
+		i = iNew
+	}
+
+	return nil
 }

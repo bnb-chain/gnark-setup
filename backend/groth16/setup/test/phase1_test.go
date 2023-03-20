@@ -1,20 +1,22 @@
 package test
 
 import (
-	"github.com/consensys/gnark/backend/groth16/setup/phase1"
 	"bytes"
+	"fmt"
+	"github.com/consensys/gnark/backend/groth16/setup/phase1"
 	"testing"
 )
 
 func TestContributeVerify(t *testing.T) {
 	// Contribute 10 times
-	nContributions := 10
-	power := 8
+	nContributions := 2
+	power := 26
 	contributions := make([]phase1.Contribution, nContributions)
 	contributions[0].Initialize(power)
 
 	// Make contributions
 	for i := 1; i < nContributions; i++ {
+		fmt.Println("contribution", i)
 		contributions[i].Contribute(&contributions[i-1])
 	}
 
@@ -38,7 +40,7 @@ func TestContributionMarshal(t *testing.T) {
 	if _, err := c2.ReadFrom(&buf); err != nil {
 		t.Error(err)
 	}
-	
+
 	if !bytes.Equal(phase1.HashContribution(&c1), phase1.HashContribution(&c2)) {
 		t.Error("failed to correctly marshal contribution")
 	}

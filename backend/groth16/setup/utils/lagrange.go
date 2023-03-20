@@ -80,7 +80,7 @@ func kerDIF8G2(a []bn254.G2Affine, twiddles [][]fr.Element, stage int) {
 	butterflyG2(&a[6], &a[7])
 }
 
-func difFFTG1(a []bn254.G1Affine, twiddles [][]fr.Element, stage, maxSplits int, chDone chan struct{}) {
+func DifFFTG1(a []bn254.G1Affine, twiddles [][]fr.Element, stage, maxSplits int, chDone chan struct{}) {
 	if chDone != nil {
 		defer close(chDone)
 	}
@@ -110,15 +110,15 @@ func difFFTG1(a []bn254.G1Affine, twiddles [][]fr.Element, stage, maxSplits int,
 	nextStage := stage + 1
 	if stage < maxSplits {
 		chDone := make(chan struct{}, 1)
-		go difFFTG1(a[m:n], twiddles, nextStage, maxSplits, chDone)
-		difFFTG1(a[0:m], twiddles, nextStage, maxSplits, nil)
+		go DifFFTG1(a[m:n], twiddles, nextStage, maxSplits, chDone)
+		DifFFTG1(a[0:m], twiddles, nextStage, maxSplits, nil)
 		<-chDone
 	} else {
-		difFFTG1(a[0:m], twiddles, nextStage, maxSplits, nil)
-		difFFTG1(a[m:n], twiddles, nextStage, maxSplits, nil)
+		DifFFTG1(a[0:m], twiddles, nextStage, maxSplits, nil)
+		DifFFTG1(a[m:n], twiddles, nextStage, maxSplits, nil)
 	}
 }
-func difFFTG2(a []bn254.G2Affine, twiddles [][]fr.Element, stage, maxSplits int, chDone chan struct{}) {
+func DifFFTG2(a []bn254.G2Affine, twiddles [][]fr.Element, stage, maxSplits int, chDone chan struct{}) {
 	if chDone != nil {
 		defer close(chDone)
 	}
@@ -148,12 +148,12 @@ func difFFTG2(a []bn254.G2Affine, twiddles [][]fr.Element, stage, maxSplits int,
 	nextStage := stage + 1
 	if stage < maxSplits {
 		chDone := make(chan struct{}, 1)
-		go difFFTG2(a[m:n], twiddles, nextStage, maxSplits, chDone)
-		difFFTG2(a[0:m], twiddles, nextStage, maxSplits, nil)
+		go DifFFTG2(a[m:n], twiddles, nextStage, maxSplits, chDone)
+		DifFFTG2(a[0:m], twiddles, nextStage, maxSplits, nil)
 		<-chDone
 	} else {
-		difFFTG2(a[0:m], twiddles, nextStage, maxSplits, nil)
-		difFFTG2(a[m:n], twiddles, nextStage, maxSplits, nil)
+		DifFFTG2(a[0:m], twiddles, nextStage, maxSplits, nil)
+		DifFFTG2(a[m:n], twiddles, nextStage, maxSplits, nil)
 	}
 }
 
@@ -188,7 +188,7 @@ func LagrangeCoeffsG1(powers []bn254.G1Affine, size int) []bn254.G1Affine {
 	numCPU := uint64(runtime.NumCPU())
 	maxSplits := bits.TrailingZeros64(ecc.NextPowerOfTwo(numCPU))
 
-	difFFTG1(coeffs, domain.TwiddlesInv, 0, maxSplits, nil)
+	DifFFTG1(coeffs, domain.TwiddlesInv, 0, maxSplits, nil)
 	BitReverseG1(coeffs)
 
 	var invBigint big.Int
@@ -196,9 +196,9 @@ func LagrangeCoeffsG1(powers []bn254.G1Affine, size int) []bn254.G1Affine {
 
 	utils.Parallelize(size, func(start, end int) {
 		for i := start; i < end; i++ {
-			 coeffs[i].ScalarMultiplication(&coeffs[i], &invBigint)
+			coeffs[i].ScalarMultiplication(&coeffs[i], &invBigint)
 		}
- })
+	})
 	return coeffs
 }
 
@@ -209,7 +209,7 @@ func LagrangeCoeffsG2(powers []bn254.G2Affine, size int) []bn254.G2Affine {
 	numCPU := uint64(runtime.NumCPU())
 	maxSplits := bits.TrailingZeros64(ecc.NextPowerOfTwo(numCPU))
 
-	difFFTG2(coeffs, domain.TwiddlesInv, 0, maxSplits, nil)
+	DifFFTG2(coeffs, domain.TwiddlesInv, 0, maxSplits, nil)
 	BitReverseG2(coeffs)
 
 	var invBigint big.Int
@@ -217,8 +217,8 @@ func LagrangeCoeffsG2(powers []bn254.G2Affine, size int) []bn254.G2Affine {
 
 	utils.Parallelize(size, func(start, end int) {
 		for i := start; i < end; i++ {
-			 coeffs[i].ScalarMultiplication(&coeffs[i], &invBigint)
+			coeffs[i].ScalarMultiplication(&coeffs[i], &invBigint)
 		}
- })
+	})
 	return coeffs
 }
