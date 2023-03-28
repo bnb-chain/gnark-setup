@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -41,7 +42,7 @@ func (circuit *Circuit) Define(api frontend.API) error {
 
 func TestSetupCircuit(t *testing.T) {
 	nContributionsPhase1 := 3
-	power := 9
+	power := 12
 	contributionsPhase1 := make([]phase1.Contribution, nContributionsPhase1)
 	contributionsPhase1[0].Initialize(power)
 
@@ -84,9 +85,13 @@ func TestSetupCircuit(t *testing.T) {
 
 	// Read PK and VK
 	pkk := groth16.NewProvingKey(ecc.BN254)
-	pkk.ReadFrom(&bufPK)
+	pkFile,_ := os.Open("pk")
+	defer pkFile.Close()
+	vkFile,_ := os.Open("vk")
+	defer vkFile.Close()
+	pkk.ReadFrom(pkFile)
 	vkk := groth16.NewVerifyingKey(ecc.BN254)
-	vkk.ReadFrom(&bufVK)
+	vkk.ReadFrom(vkFile)
 
 	assignment := &Circuit{
 		PreImage: "16130099170765464552823636852555369511329944820189892919423002775646948828469",

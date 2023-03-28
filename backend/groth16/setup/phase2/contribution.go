@@ -122,7 +122,7 @@ func (c2 *Contribution) PreparePhase2(c1 *phase1.Contribution, r1cs *cs_bn254.R1
 
 	// Build Z in PK as τⁱ(τⁿ - 1)  = τ⁽ⁱ⁺ⁿ⁾ - τⁱ  for i ∈ [0, n-2]
 	// τⁱ(τⁿ - 1)  = τ⁽ⁱ⁺ⁿ⁾ - τⁱ  for i ∈ [0, n-2]
-	n := len(srs.G1.AlphaTau)
+	n := nextPowerOfTwo(r1cs.GetNbConstraints())
 	c2.Parameters.G1.Z = make([]bn254.G1Affine, n)
 	for i := 0; i < n-1; i++ {
 		c2.Parameters.G1.Z[i].Sub(&srs.G1.Tau[i+n], &srs.G1.Tau[i])
@@ -208,4 +208,16 @@ func HashContribution(c *Contribution) []byte {
 		}
 	}
 	return sha.Sum(nil)
+}
+
+func nextPowerOfTwo(number int) int {
+	res := 1
+	for i:=1; i<28; i++ {
+		if res > number {
+			break
+		} else {
+			res = res *2
+		}
+	}
+	return res
 }
